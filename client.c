@@ -1,17 +1,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <pthread.h>
+#include <winsock2.h>  // 用于套接字和网络功能
+#include <windows.h>   // 用于线程和睡眠函数
 #include "defs.h"
 
 #define MAX_BUFFER_SIZE 2048
 #define RETRY_LIMIT 5
 
+// 在程序开始时初始化 Winsock 库
 int sockfd;
 int connection_status = 0;
-pthread_t rcv_thread;
+HANDLE rcv_thread; // 使用 Windows 线程类型
 
 void *receive(void *arg)
 {
@@ -20,11 +20,11 @@ void *receive(void *arg)
     int n;
     while ((n = recv(sockfd, buffer, MAX_BUFFER_SIZE, 0)) > 0)
     {
-        printf("\033[s");
+        // printf("\033[s");
         Packet *packet = (Packet *)buffer;
-        printf("\033[15;0H");
-        printf("\033[K\n\033[K\n\033[K\n\033[K\n\033[K\n");
-        printf("\033[15;0H");
+        // printf("\033[15;0H");
+        // printf("\033[K\n\033[K\n\033[K\n\033[K\n\033[K\n");
+        // printf("\033[15;0H");
         switch (packet->type)
         {
         case CMD_TIME:
@@ -37,22 +37,34 @@ void *receive(void *arg)
             printf("Client list:\n%s", packet->data);
             break;
         case CMD_SEND_MESSAGE:
-            printf("Message from client %d: %s\n", packet->client_id, packet->data);
+            if(packet->client_id == 0)
+                printf("Message from server: %s\n", packet->data);
+            else
+                printf("Message from client %d: %s\n", packet->client_id, packet->data);
             break;
         default:
             printf("Unknown packet type.\n");
             break;
         }
-        printf("\033[u");
+        // printf("\033[u");
     }
     connection_status = 0;
+    // printf("\033[s");
+    Packet *packet = (Packet *)buffer;
+    // printf("\033[15;0H");
+    // printf("\033[K\n\033[K\n\033[K\n\033[K\n\033[K\n");
+    // printf("\033[15;0H");
     printf("Server disconnected.\n");
+    // printf("\033[u");
     return NULL;
 }
 
 void show_menu()
 {
-    printf("\033[0;0H");
+    // printf("\033[0;0H");
+    // printf("\033[K\n\033[K\n\033[K\n\033[K\n\033[K\n");
+    // printf("\033[K\n\033[K\n\033[K\n\033[K\n");
+    // printf("\033[0;0H");
     if (connection_status == 0)
         printf("Server Not Connected\n");
     else
@@ -70,21 +82,32 @@ void show_menu()
 
 int main()
 {
-
-    // 使用 TCP 协议
+    WSADATA wsaData;
     struct sockaddr_in server_addr;
-    server_addr.sin_family = AF_INET;
-    system("clear");
     int choice;
+    int retry;
+
+    // 初始化 Winsock
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+    {
+        printf("WSAStartup failed.\n");
+        return 1;
+    }
+
+    server_addr.sin_family = AF_INET;
+    // system("cls");  // Windows 环境下使用 cls 清屏
+
     while (1)
     {
         show_menu();
-        printf("\033[10;0H");
+        // printf("\033[10;0H");
         printf("Enter your choice: ");
-        printf("\033[K");
+        // printf("\033[K");
         scanf("%d", &choice);
-        printf("\033[K\n\033[K\n\033[K\n\033[K\n");
-        printf("\033[11;0H");
+        // printf("\033[K\n\033[K\n\033[K\n\033[K\n");
+        // printf("\033[11;0H");
+        Packet packet;
+        memset(&packet, 0, sizeof(packet));
         switch (choice)
         {
         case CMD_CONNECT: // connect to server
@@ -93,31 +116,31 @@ int main()
                 sockfd = socket(AF_INET, SOCK_STREAM, 0);
                 if (sockfd < 0)
                 {
-                    printf("\033[K");
+                    // printf("\033[K");
                     printf("Socket creation failed.\n");
                     exit(1);
                 }
                 char ip[20];
+                // printf("\033[K");
                 printf("Enter server IP: ");
                 scanf("%s", ip);
                 server_addr.sin_addr.s_addr = inet_addr(ip);
                 server_addr.sin_port = htons(SERVER_PORT);
-                int retry = 0;
+                retry = 0;
                 while (retry < RETRY_LIMIT && connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
                 {
-                    // if (!retry)
-                    //     printf("Connection failed.");
-                    // printf("Retrying...\n");
+                    // printf("\033[K");
                     retry++;
-                    usleep(100000);
+                    Sleep(100);  // 使用 Sleep 代替 usleep，单位是毫秒
                 }
-                if (retry >= RETRY_LIMIT)
+                if (retry >= RETRY_LIMIT){
                     printf("Server cannot be reached.\n");
+                    }
                 else
                 {
                     connection_status = 1;
                     printf("Connected to server.\n");
-                    pthread_create(&rcv_thread, NULL, receive, (void *)&sockfd);
+                    rcv_thread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)receive, (void *)&sockfd, 0, NULL);
                 }
             }
             else
@@ -126,7 +149,7 @@ int main()
         case CMD_DISCONNECT: // disconnect from server
             if (connection_status == 1)
             {
-                close(sockfd);
+                closesocket(sockfd);  // 使用 closesocket 关闭套接字
                 connection_status = 0;
                 printf("Disconnected from server.\n");
             }
@@ -134,22 +157,22 @@ int main()
                 printf("Not connected yet.\n");
             break;
         case CMD_TIME: // get time from server
+            
             if (connection_status == 1)
             {
-                Packet packet;
-                packet.length = sizeof(packet);
+                packet.length = 0;
                 packet.type = CMD_TIME;
                 packet.client_id = 0;
                 send(sockfd, &packet, sizeof(packet), 0);
             }
             else
                 printf("Not connected yet.\n");
+            
             break;
         case CMD_NAME: // get name from server
             if (connection_status == 1)
             {
-                Packet packet;
-                packet.length = sizeof(packet);
+                packet.length = 0;
                 packet.type = CMD_NAME;
                 packet.client_id = 0;
                 send(sockfd, &packet, sizeof(packet), 0);
@@ -160,8 +183,7 @@ int main()
         case CMD_LIST: // get client list from server
             if (connection_status == 1)
             {
-                Packet packet;
-                packet.length = sizeof(packet);
+                packet.length = 0;
                 packet.type = CMD_LIST;
                 packet.client_id = 0;
                 send(sockfd, &packet, sizeof(packet), 0);
@@ -172,8 +194,6 @@ int main()
         case CMD_SEND_MESSAGE: // send message to server
             if (connection_status == 1)
             {
-                Packet packet;
-                packet.length = sizeof(packet);
                 packet.type = CMD_SEND_MESSAGE;
                 printf("Enter client ID: ");
                 scanf("%d", &packet.client_id);
@@ -185,6 +205,7 @@ int main()
                     data++;
                 }
                 *data = '\0';
+                packet.length = strlen(packet.data);
                 send(sockfd, &packet, sizeof(packet), 0);
                 printf("Message sent to server.\n");
             }
@@ -192,21 +213,24 @@ int main()
                 printf("Not connected yet.\n");
             break;
         case CMD_EXIT: // exit
+            // system("cls");  // Windows 环境下使用 cls 清屏
             if (connection_status == 1)
             {
-                close(sockfd);
+                closesocket(sockfd);
                 connection_status = 0;
                 printf("Disconnected from server.\n");
             }
             printf("Exiting...\n");
-            usleep(500000);
+            Sleep(500); // 使用 Sleep 代替 usleep
+            WSACleanup();  // 清理 Winsock
             exit(0);
             break;
         default:
             printf("Invalid choice.\n");
             break;
         }
-        usleep(1000000);
+        Sleep(1000); // 使用 Sleep 代替 usleep
+        printf("\n\n\n");
     }
 
     return 0;
